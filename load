@@ -1,0 +1,18 @@
+xmag = 4
+ymag = 111
+
+delay = 150
+
+while true do
+SendPacket(2, "action|buy\nitem|farm_pack\n")
+Sleep(delay)
+SendPacket(2, "action|buy\nitem|farm_pack\n")
+Sleep(delay)
+SendPacket(2, "action|buy\nitem|farm_pack\n")
+Sleep(delay)
+SendPacket(2, "action|buy\nitem|farm_pack\n")
+Sleep(delay)
+SendPacket(2, "action|dialog_return\ndialog_name|itemaddedtosucker\ntilex|"..xmag.."|\ntiley|"..ymag.."|\nitemtoadd|200]\n")
+Sleep(delay)
+SendPacket(2, "action|dialog_return\ndialog_name|trash_item\nitemID|4584|\ncount|200\n")
+end
