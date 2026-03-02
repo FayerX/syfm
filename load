@@ -1,18 +1,662 @@
-xmag = 4
-ymag = 111
+-- == CONFIG == --
+delay = 100 -- Delay super cepat! Boleh 0~10, jangan terlalu tinggi
+BackgroundMag = 14	-- ID Background gae scan magplant cok
+seedid = 5640		-- Mostly cuma ID magplant aj le
+breakIDs = {332}	-- block yang mau di brek jing
+-- == CONFIG == --
 
-delay = 150
 
-while true do
-SendPacket(2, "action|buy\nitem|farm_pack\n")
-Sleep(delay)
-SendPacket(2, "action|buy\nitem|farm_pack\n")
-Sleep(delay)
-SendPacket(2, "action|buy\nitem|farm_pack\n")
-Sleep(delay)
-SendPacket(2, "action|buy\nitem|farm_pack\n")
-Sleep(delay)
-SendPacket(2, "action|dialog_return\ndialog_name|itemaddedtosucker\ntilex|"..xmag.."|\ntiley|"..ymag.."|\nitemtoadd|200]\n")
-Sleep(delay)
-SendPacket(2, "action|dialog_return\ndialog_name|trash_item\nitemID|4584|\ncount|200\n")
+-- ==== WHITELIST ====
+-- isi dengan userID akun alt / teman
+whitelistUsers = {
+12582333, 
+12575417,
+34611556,
+37048930,
+7223352
+}
+-- optional: whitelist nama bersih
+whitelistNames = {
+
+}
+-- ==== WHITELIST ====
+
+
+-- ==== SAFETY MODE ====
+-- "pause"      -> pause kalau ada entity
+-- "leave"      -> langsung keluar world
+-- "ignore"     -> tidak peduli
+safetyMode = "ignore"
+-- Resume delay random kalau pakai pause (detik)
+resumeDelayMin = 3
+resumeDelayMax = 7
+-- =========================================
+--              STATE
+-- =========================================
+staffOnline = {}
+exiting = false
+lastUnsafe = 0
+waitingResume = false
+modDetected = false
+-- ==== SAFETY MODE ====
+
+
+-- == CONFIG 2 == --
+resumeTime = 0
+farmStartX = 1		-- X ujung kiri place & break
+farmEndX   = 18		-- X ujung kanan place & break
+farmY      = 118	-- posisi Y place & break
+brikX		= 1		-- Jangan dipikirkan, tidak penting kadang tidak terpakai
+brikY		= 118	-- Jangan dipikirkan, tidak penting kadang tidak terpakai
+currentWorld = ""
+worldReady = false
+-- == CONFIG 2 == --
+
+
+--MAGPLANT STUFF--
+lastSwitch = 0
+switchDelay = 2
+allMagEmpty = false
+emptyCount = 0
+cycleChecked = false
+checkedMag = {}
+--Magplant Remote Shit--
+magplants = {}
+currentMag = 0
+needSwitch = false
+activeMagX = 0
+activeMagY = 0
+lastBubble = 0
+bubbleDelay = 1
+lastDialogRead = 0
+dialogDelay = 1
+
+function scanMagplants()
+    magplants = {}
+    currentMag = 0
+    checkedMag = {}
+    emptyCount = 0
+    cycleChecked = false
+
+    for _, tile in pairs(GetTiles()) do
+        if tile.bg == BackgroundMag and 
+           (tile.fg == 5638 or tile.fg == 9850 or tile.fg == 10266) then
+            table.insert(magplants, {x = tile.x, y = tile.y})
+        end
+    end
+
+    table.sort(magplants, function(a,b)
+        return a.x < b.x
+    end)
+
+    print("Found "..#magplants.." magplants.")
+
+    if #magplants > 0 then
+        currentMag = 1
+        activeMagX = magplants[1].x
+        activeMagY = magplants[1].y
+        print("Setting initial magplant...")
+        Wrench(activeMagX, activeMagY)
+        lastSwitch = os.time()
+    end
 end
+function switchMagplant()
+
+    if #magplants == 0 then return end
+    if os.time() - lastSwitch < switchDelay then return end
+
+    if currentMag >= #magplants then
+        cycleChecked = true
+        return
+    end
+
+    currentMag = currentMag + 1
+
+    activeMagX = magplants[currentMag].x
+    activeMagY = magplants[currentMag].y
+    lastSwitch = os.time()
+
+    print("Switching to magplant "..currentMag)
+    Wrench(activeMagX, activeMagY)
+end
+function requestSwitch()
+    if os.time() - lastSwitch < switchDelay then return end
+    if needSwitch then return end
+    needSwitch = true
+end
+--Magplant Remote Shit--
+
+function GoPath(t, s, v, x, y) 
+    if GetWorld() == nil then 
+        return 
+    end 
+    SendPacketRaw(false, {
+        type = t, 
+        state = s, 
+        value = v, 
+        px = x, 
+        py = y, 
+        x = x * 32, 
+        y = y * 32
+    }) 
+    if t == nil then 
+         SendVariantList({[0] = "OnSetPos",[1] = {x = x*32, y = y*32}}, GetLocal().netid)
+    end 
+end
+
+function tele(x, y) 
+    if GetWorld() == nil or GetLocal() == nil then
+        return
+    end
+    iX, iY = math.floor(GetLocal().pos.x / 32), math.floor(GetLocal().pos.y / 32) 
+    DistX = x - iX 
+    DistY = y - iY 
+    if DistY > 1 then 
+        for i = 1, math.floor(DistY / 1) do 
+            iY = iY + 1 
+            GoPath(3, 1, 0, iX, iY) 
+            GoPath(nil, nil, nil, iX, iY) 
+        end 
+    elseif DistY < -1 then 
+        for i = 1, math.floor(DistY / -1) do 
+            iY = iY - 1 
+            GoPath(3, 1, 0, iX, iY) 
+            GoPath(nil, nil, nil, iX, iY) 
+        end 
+    end 
+    if DistX > 1 then 
+        for i = 1, math.floor(DistX / 1) do 
+            iX = iX + 1 
+            GoPath(3, 1, 0, iX, iY) 
+            GoPath(nil, nil, nil, iX, iY) 
+        end 
+    elseif DistX < -1 then 
+        for i = 1, math.floor(DistX / -1) do 
+            iX = iX - 1 
+            GoPath(3, 1, 0, iX, iY) 
+            GoPath(nil, nil, nil, iX, iY) 
+        end 
+    end 
+    iX, iY = x, y 
+    GoPath(3, 1, 0, iX, iY) 
+    GoPath(nil, nil, nil, iX, iY)  
+end
+
+function inv(itemid)
+    for _, item in pairs(GetInventory()) do
+        if item.id == itemid then return item.amount end
+    end
+    return 0
+end
+
+function isWorldSafe()
+    local players = GetPlayerList()
+    if not players then return true end
+
+    local myID = GetLocal().userid
+
+    for _, p in pairs(players) do
+        if p.userid ~= myID then
+            if not isWhitelisted(p.userid, p.name) then
+                return false
+            end
+        end
+    end
+
+    return true
+end
+
+function hasStaffOnline()
+    return next(staffOnline) ~= nil
+end
+
+function shouldPause()
+    if safetyMode ~= "pause" then
+        return false
+    end
+
+    if hasStaffOnline() then
+        return true
+    end
+
+    if not isWorldSafe() then
+        return true
+    end
+
+    return false
+end
+
+function isWhitelisted(userID, name)
+    -- userID
+    for _, id in pairs(whitelistUsers) do
+        if id == userID then
+            return true
+        end
+    end
+	-- Nama
+    local clean = cleanName(name)
+    for _, n in pairs(whitelistNames) do
+        if n == clean then
+            return true
+        end
+    end
+
+    return false
+end
+
+function notify(msg, color)
+    SendVariantList({
+        [0] = "OnAddNotification",
+        [1] = "interface/atomic_button.rttex",
+        [2] = color..msg,
+        [3] = "audio/hub_open.wav",
+        [4] = 0
+    })
+end
+
+function randomResumeDelay()
+    return math.random(resumeDelayMin, resumeDelayMax)
+end
+
+function placeSeed(x, y)
+    local pkt = {
+        type = 3,
+        px = x,
+        py = y,
+        x = x * 32,
+        y = y * 32,
+        value = seedid
+    }
+    SendPacketRaw(false, pkt)
+end
+
+function breakBlock(x, y)
+    local brek = {
+        type = 3,
+        px = x,
+        py = y,
+        x = x * 32,
+        y = y * 32,
+        value = 18
+    }
+    SendPacketRaw(false, brek)
+end
+
+function breakMe(id)
+  SendPacketRaw(false, {
+    type  = 3,
+    value = id,
+    px    = GetLocal().pos.x // 32,
+    py    = GetLocal().pos.y // 32,
+    x     = GetLocal().pos.x // 32 * 32,
+    y     = GetLocal().pos.y // 32 * 32
+  })
+end
+
+function isBreakTarget(id)
+    for _, v in pairs(breakIDs) do
+        if v == id then
+            return true
+        end
+    end
+    return false
+end
+
+function break_tile(x, y)
+    SendPacketRaw(false, {
+        state = 32,
+        x = x * 32-1,
+        y = y * 32
+    })
+    SendPacketRaw(false, {
+        type = 3,
+        value = 18,
+        px = x,
+        py = y,
+        x = x * 32,
+        y = y * 32
+    })
+end
+
+function fastPlant()
+    for x = farmStartX, farmEndX do
+		if safetyMode == "pause" and shouldPause() then
+			return
+		end
+
+        local tile = GetTile(x, farmY)
+        if tile and tile.fg == 0 then
+            local below = GetTile(x, farmY + 1)
+            if below and below.fg ~= 0 then
+                if inv(seedid) > 0 then
+                    placeSeed(x, farmY)
+                else
+                    return
+                end
+            end
+        end
+    end
+end
+
+function fastBrek()
+    for x = farmStartX, farmEndX do
+		if safetyMode == "pause" and shouldPause() then
+			return
+		end
+
+        local tile = GetTile(x, farmY)
+        if tile and isBreakTarget(tile.fg) then
+            local below = GetTile(x, farmY + 1)
+            if below and below.fg ~= 0 then
+--				breakBlock(brikX, brikY)
+				break_tile(x, farmY)		
+				Sleep(delay)
+            end
+        end
+    end
+end
+
+function Wrench(x, y)
+SendPacketRaw(false, {
+  ["type"] = 3,
+  ["state"] = 32,
+  ["value"] = 32,
+  ["px"] = x,
+  ["py"] = y,
+  ["x"] = x * 32,
+  ["y"] = y * 32
+})
+end
+
+function checkWorld()
+    local world = GetWorld()
+    
+    if world == nil then
+        if worldReady then
+            print("World left. Waiting...")
+            worldReady = false
+        end
+        return false
+    end
+
+    if world.name ~= currentWorld then
+        currentWorld = world.name
+        worldReady = true
+        print("Entered world:", currentWorld)
+		Sleep(1500) -- tunggu entity load
+		FindPath(0,114)
+		allMagEmpty = false
+		needSwitch = false
+		currentMag = 1
+		emptyCount = 0
+		cycleChecked = false
+		checkedMag = {}
+        Sleep(1500)
+        scanMagplants()
+    end
+
+    return true
+end
+
+function cleanName(str)
+    return str:gsub("`.", "")
+end
+
+function randomTeleport()
+    local rx = math.random(farmStartX, farmEndX)
+    local ry = farmY - math.random(0,5)
+	tele(rx, ry)
+--	tele(3,68)
+	FindPath(3,68)
+end
+
+
+
+-- =========================================
+--              STAFF DETECT
+-- =========================================
+
+AddHook("OnVariant", "STAFF_DETECT", function(var)
+    if var[0] ~= "OnSpawn" or not var[1] then return end
+
+    local data = var[1]
+    local userID  = tonumber(data:match("userID|(%d+)"))
+    local netID   = tonumber(data:match("netID|(%d+)"))
+    local name    = data:match("name|(.-)\n") or "Unknown"
+    local invis   = data:match("invis|(%d)")
+    local mstate  = data:match("mstate|(%d)")
+    local smstate = data:match("smstate|(%d)")
+    local isMod   = data:find("mod|1")
+
+	local localPlayer = GetLocal()
+	if not userID then return end
+	if not localPlayer then return end
+	if userID == localPlayer.userid then return end
+	if isWhitelisted(userID, name) then return end
+
+    local detected = false
+
+    -- Deteksi eksplisit mod
+    if isMod then
+        detected = true
+    end
+
+    -- Deteksi invis / special state (opsional keras)
+    if invis == "1" or mstate == "1" or smstate == "1" then
+        detected = true
+    end
+
+    if detected then
+        staffOnline[userID] = name
+        print("`4[STAFF DETECTED] "..name)
+		notify("Staff detected: `^"..cleanName(name).." `4(Script Paused)", "`4")
+		LogToConsole("`4Staff detected: `^"..cleanName(name).." `4(Script Paused)")
+
+        if safetyMode == "leave" and not exiting then
+            exiting = true
+            print("`4AUTO LEAVE (STAFF)")
+            SendPacket(3, "action|quit_to_exit")
+        end
+    end
+end)
+
+AddHook("OnVariant", "STAFF_LEAVE", function(var)
+    if var[0] ~= "OnRemove" or not var[1] then return end
+
+    local userID = tonumber(var[1]:match("userID|(%d+)"))
+    if not userID then return end
+
+    if staffOnline[userID] then
+        print("`2[STAFF LEFT] "..staffOnline[userID])
+        staffOnline[userID] = nil
+    end
+end)
+
+-- =========================================
+--              GLOBAL ENTITY DETECT
+-- =========================================
+
+AddHook("OnVariant", "ENTITY_DETECT", function(var)
+    if var[0] ~= "OnSpawn" or not var[1] then return end
+
+    if safetyMode ~= "leave" then return end
+
+    local data = var[1]
+    local userID = tonumber(data:match("userID|(%d+)"))
+    local name = data:match("name|(.-)\n") or "Unknown"
+
+    local localPlayer = GetLocal()
+    if not localPlayer then return end
+    if userID == localPlayer.userid then return end
+
+    if not exiting then
+        exiting = true
+        print("`4ENTITY DETECTED: "..name.." -> AUTO LEAVE")
+        SendPacket(3, "action|quit_to_exit")
+    end
+end)
+
+AddHook("OnVariant", "MagplantStockReader", function(var)
+
+    if var[0] ~= "OnDialogRequest" then return end
+    if not var[1] then return end
+
+    -- ambil tile
+    local tilex = tonumber(var[1]:match("tilex|(%d+)"))
+    local tiley = tonumber(var[1]:match("tiley|(%d+)"))
+
+    if tilex ~= activeMagX or tiley ~= activeMagY then return end
+
+    -- prevent spam read
+	if os.time() - lastDialogRead < dialogDelay then return end
+	lastDialogRead = os.time()
+
+    -- cek stock
+    local stock = var[1]:match("The machine contains (%d+)")
+    if stock then
+        stock = tonumber(stock)
+        print("Magplant index "..currentMag.." stock:", stock)
+
+        if stock == 0 and not checkedMag[currentMag] then
+            checkedMag[currentMag] = true
+            emptyCount = emptyCount + 1
+            print("Empty confirmed at index:", currentMag)
+            requestSwitch()
+        end
+    end
+
+    -- fallback
+    if var[1]:find("The machine is currently empty!") then
+        if not checkedMag[currentMag] then
+            checkedMag[currentMag] = true
+            emptyCount = emptyCount + 1
+            print("Dialog empty fallback at index:", currentMag)
+            requestSwitch()
+        end
+    end
+
+end)
+
+AddHook("OnVariant", "EmptyBubble", function(var)
+    if var[0] ~= "OnTalkBubble" then return end
+    if not var[2] then return end
+
+    if not var[2]:find("Magplant") then return end
+    if not var[2]:find("empty") then return end
+
+    if os.time() - lastBubble < bubbleDelay then return end
+    lastBubble = os.time()
+
+    requestSwitch()
+    return true
+end)
+
+AddHook("OnVariant", "takeremote", function (rutvarlist2)
+	if rutvarlist2[0]:find("OnDialogRequest") and rutvarlist2[1]:find("add_button|getplantationdevice|Get Remote|") then
+		local tilex = tonumber(rutvarlist2[1]:match("tilex|(%d+)"))
+		local tiley = tonumber(rutvarlist2[1]:match("tiley|(%d+)"))
+		akt = string.format([[action|dialog_return
+		dialog_name|itemsucker_block
+		tilex|%d|
+		tiley|%d|
+		buttonClicked|getplantationdevice
+
+		chk_enablesucking|1
+		]], tilex, tiley)
+		SendPacket(2, akt)
+		return true
+	end
+end
+)
+
+function main()
+	while GetWorld() == nil do
+		Sleep(3000)
+	end
+
+--	Sleep(500)
+--	scanMagplants()
+--	Sleep(3000)
+    while true do
+
+        if not checkWorld() then
+            Sleep(500)
+            goto continue
+        end
+
+        if #magplants == 0 then
+            print("No magplants found.")
+            break
+        end
+
+        -- =====================================
+        -- PRIORITAS 1: SAFETY MODE
+        -- =====================================
+
+		if safetyMode == "pause" then
+			if shouldPause() then
+				lastUnsafe = os.time()
+				waitingResume = true
+				Sleep(1000)
+				goto continue
+			end
+
+			-- kalau sebelumnya unsafe dan sekarang aman
+			if waitingResume then
+				local waitTime = randomResumeDelay()
+				print("`2World clear. Waiting "..waitTime.." sec before resume.")
+				notify("No staff detected. Script resumed.", "`2")
+				LogToConsole("`2No staff detected. Script resumed.")
+				Sleep(waitTime * 1000)
+				waitingResume = false
+				detected = false
+--				tele(0,114)
+				FindPath(0,114)
+			end
+		end
+
+        -- =====================================
+        -- PRIORITAS 2: SWITCH MAGPLANT
+        -- =====================================
+
+		if needSwitch then
+			needSwitch = false
+			switchMagplant()
+		end
+
+		if cycleChecked then
+			if emptyCount >= #magplants then
+				print("Semua magplant benar-benar kosong. STOP.")
+				break
+			else
+				print("Refill detected. Reset cycle.")
+				scanMagplants()
+				cycleChecked = false
+			end
+		end
+
+        -- =====================================
+        -- PRIORITAS 3: FARMING
+        -- =====================================
+
+		if inv(seedid) > 0 then
+			fastPlant()
+			fastBrek()
+		else
+			if os.time() - lastSwitch > switchDelay then
+				print("Seed kosong, cek magplant...")
+				Wrench(activeMagX, activeMagY)
+				lastSwitch = os.time()
+			end
+			Sleep(500)
+		end
+
+        ::continue::
+        Sleep(100)
+    end
+end
+
+-- Tampilkan info saat script dieksekusi
+print("SCRIPT AFK BREAK BY Ran")
+
+main()
